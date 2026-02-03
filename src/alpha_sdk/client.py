@@ -218,6 +218,10 @@ class AlphaClient:
         )
         self._turn_span.__enter__()
 
+        # Capture trace context so proxy spans nest under this turn
+        if self._proxy:
+            self._proxy.set_trace_context(logfire.get_context())
+
         with logfire.span("alpha.query") as span:
             # Handle session switching
             await self._ensure_session(session_id, fork_from)

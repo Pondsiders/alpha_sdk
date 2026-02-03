@@ -13,6 +13,7 @@ One turn → one span → everything nested inside.
 import asyncio
 import logging
 import socket
+from contextlib import nullcontext
 from typing import Any, Callable, Awaitable
 
 import httpx
@@ -59,6 +60,10 @@ class AlphaProxy:
         await proxy.start()
 
         os.environ["ANTHROPIC_BASE_URL"] = proxy.base_url
+
+        # Before each turn, set the trace context so proxy spans nest properly
+        proxy.set_trace_context(logfire.get_context())
+
         # ... use SDK ...
 
         await proxy.stop()
@@ -86,6 +91,7 @@ class AlphaProxy:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._http_client: httpx.AsyncClient | None = None
+        self._trace_context: dict | None = None
 
     async def start(self) -> int:
         """Start the proxy server.
@@ -138,6 +144,16 @@ class AlphaProxy:
         """Get the port number."""
         return self._port
 
+    def set_trace_context(self, ctx: dict) -> None:
+        """Set the trace context for request handlers.
+
+        Call this before each turn so proxy spans nest under the turn span.
+
+        Args:
+            ctx: Trace context from logfire.get_context()
+        """
+        self._trace_context = ctx
+
     async def _handle_request(self, request: web.Request) -> web.StreamResponse:
         """Handle incoming requests from the SDK."""
         path = "/" + request.match_info.get("path", "")
@@ -150,17 +166,25 @@ class AlphaProxy:
         if request.method != "POST":
             return web.Response(status=404, text="Not found")
 
-        with logfire.span(
-            "proxy.forward",
-            path=path,
-            method=request.method,
-        ) as span:
-            try:
-                return await self._forward_request(request, path, span)
-            except Exception as e:
-                logger.error(f"Proxy error: {e}")
-                span.set_attribute("error", str(e))
-                return web.Response(status=500, text=str(e))
+        # Attach trace context so spans nest under the current turn
+        context_manager = (
+            logfire.attach_context(self._trace_context)
+            if self._trace_context
+            else nullcontext()
+        )
+
+        with context_manager:
+            with logfire.span(
+                "proxy.forward",
+                path=path,
+                method=request.method,
+            ) as span:
+                try:
+                    return await self._forward_request(request, path, span)
+                except Exception as e:
+                    logger.error(f"Proxy error: {e}")
+                    span.set_attribute("error", str(e))
+                    return web.Response(status=500, text=str(e))
 
     async def _forward_request(
         self,
