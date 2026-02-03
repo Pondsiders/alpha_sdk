@@ -9,6 +9,8 @@ dependencies = [
     "logfire>=3.0.0",
     "pendulum>=3.0.0",
     "pgvector>=0.3.0",
+    "psycopg[binary]>=3.0.0",
+    "python-frontmatter>=1.0.0",
     "redis>=5.0.0",
     "pyyaml>=6.0.0",
 ]
