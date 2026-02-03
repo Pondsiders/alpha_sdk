@@ -3,14 +3,14 @@
 import asyncio
 import logging
 
-# Set up logging so we can see what's happening
-logging.basicConfig(level=logging.INFO)
-
 from src.alpha_sdk import AlphaClient
+from src.alpha_sdk.observability import configure
 
-# Skip observability for now - missing otel-httpx dependency
-# from src.alpha_sdk.observability import configure
-# configure("alpha_sdk_test")
+# Configure Logfire - will send to https://logfire-us.pydantic.dev/jefferyharrell/pondside
+configure("alpha_sdk_test")
+
+# Also log to console
+logging.getLogger().setLevel(logging.INFO)
 
 
 async def main():

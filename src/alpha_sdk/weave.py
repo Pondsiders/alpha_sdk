@@ -7,6 +7,8 @@ assembled prompt, and returns the modified request.
 import logging
 from typing import Any
 
+import logfire
+
 from .system_prompt import assemble
 
 logger = logging.getLogger(__name__)
@@ -27,29 +29,48 @@ async def weave(
     Returns:
         Modified request body with Alpha's system prompt injected.
     """
-    # Build the complete system prompt
-    system_blocks = await assemble(client=client, hostname=hostname)
+    with logfire.span(
+        "weave",
+        client=client or "unknown",
+        hostname=hostname or "unknown",
+        model=body.get("model", "unknown"),
+    ) as span:
+        # Build the complete system prompt
+        system_blocks = await assemble(client=client, hostname=hostname)
+        span.set_attribute("system_blocks", len(system_blocks))
 
-    # Get existing system from request
-    existing_system = body.get("system")
+        # Calculate total system prompt size
+        total_chars = sum(
+            len(block.get("text", "")) if isinstance(block, dict) else 0
+            for block in system_blocks
+        )
+        span.set_attribute("system_chars", total_chars)
 
-    if existing_system is None:
-        # No system prompt - just add ours
-        body["system"] = system_blocks
+        # Get existing system from request
+        existing_system = body.get("system")
 
-    elif isinstance(existing_system, list) and len(existing_system) >= 1:
-        # SDK sends: [0]=billing header, [1]=SDK boilerplate, [2]=safety envelope
-        # Keep the billing header (element 0), replace everything else
-        billing_header = existing_system[0]
-        body["system"] = [billing_header] + system_blocks
+        if existing_system is None:
+            # No system prompt - just add ours
+            body["system"] = system_blocks
+            span.set_attribute("merge_mode", "replace_empty")
 
-    elif isinstance(existing_system, str):
-        # Old-style string system prompt - replace entirely
-        body["system"] = system_blocks
+        elif isinstance(existing_system, list) and len(existing_system) >= 1:
+            # SDK sends: [0]=billing header, [1]=SDK boilerplate, [2]=safety envelope
+            # Keep the billing header (element 0), replace everything else
+            billing_header = existing_system[0]
+            body["system"] = [billing_header] + system_blocks
+            span.set_attribute("merge_mode", "keep_billing_header")
+            span.set_attribute("original_blocks", len(existing_system))
 
-    else:
-        logger.warning(f"Unexpected system format: {type(existing_system)}, replacing")
-        body["system"] = system_blocks
+        elif isinstance(existing_system, str):
+            # Old-style string system prompt - replace entirely
+            body["system"] = system_blocks
+            span.set_attribute("merge_mode", "replace_string")
 
-    logger.info(f"Wove Alpha into request ({len(system_blocks)} blocks)")
-    return body
+        else:
+            logger.warning(f"Unexpected system format: {type(existing_system)}, replacing")
+            body["system"] = system_blocks
+            span.set_attribute("merge_mode", "replace_unexpected")
+
+        logger.info(f"Wove Alpha into request ({len(system_blocks)} blocks)")
+        return body

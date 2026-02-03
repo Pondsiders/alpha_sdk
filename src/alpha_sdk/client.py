@@ -13,6 +13,8 @@ import logging
 import os
 from typing import Any, AsyncGenerator, AsyncIterable
 
+import logfire
+
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
@@ -206,24 +208,33 @@ class AlphaClient:
             session_id: Session to resume, or None for new session
             fork_from: Session to fork from (creates new session with context)
         """
-        # Handle session switching
-        await self._ensure_session(session_id, fork_from)
+        with logfire.span(
+            "alpha.query",
+            session_id=session_id or "new",
+            fork_from=fork_from,
+            client_name=self.client_name,
+        ) as span:
+            # Handle session switching
+            await self._ensure_session(session_id, fork_from)
 
-        # Store prompt for memory extraction
-        if isinstance(prompt, str):
-            self._last_user_content = prompt
+            # Store prompt for memory extraction
+            if isinstance(prompt, str):
+                self._last_user_content = prompt
+                span.set_attribute("prompt_length", len(prompt))
+                span.set_attribute("prompt_preview", prompt[:200])
 
-            # Recall memories based on the prompt
-            if self._current_session_id:
-                memories = await recall(prompt, self._current_session_id)
-                if memories:
-                    logger.info(f"Recalled {len(memories)} memories")
+                # Recall memories based on the prompt
+                if self._current_session_id:
+                    memories = await recall(prompt, self._current_session_id)
+                    if memories:
+                        span.set_attribute("memories_recalled", len(memories))
+                        logger.info(f"Recalled {len(memories)} memories")
 
-        # Send to SDK
-        if self._sdk_client:
-            await self._sdk_client.query(prompt)
-        else:
-            raise RuntimeError("Client not connected. Call connect() first.")
+            # Send to SDK
+            if self._sdk_client:
+                await self._sdk_client.query(prompt)
+            else:
+                raise RuntimeError("Client not connected. Call connect() first.")
 
     async def stream(self) -> AsyncGenerator[Any, None]:
         """Stream responses from the agent.
@@ -234,23 +245,36 @@ class AlphaClient:
         if not self._sdk_client:
             raise RuntimeError("Client not connected. Call connect() first.")
 
-        assistant_text_parts: list[str] = []
+        with logfire.span("alpha.stream", session_id=self._current_session_id or "unknown") as span:
+            assistant_text_parts: list[str] = []
+            message_count = 0
 
-        async for message in self._sdk_client.receive_response():
-            # Accumulate assistant text for memory extraction
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        assistant_text_parts.append(block.text)
+            async for message in self._sdk_client.receive_response():
+                message_count += 1
 
-            # Capture session ID from result
-            if isinstance(message, ResultMessage):
-                self._current_session_id = message.session_id
+                # Accumulate assistant text for memory extraction
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            assistant_text_parts.append(block.text)
 
-            yield message
+                # Capture session ID and stats from result
+                if isinstance(message, ResultMessage):
+                    self._current_session_id = message.session_id
+                    span.set_attribute("final_session_id", message.session_id)
+                    span.set_attribute("duration_ms", message.duration_ms)
+                    span.set_attribute("num_turns", message.num_turns)
+                    if message.total_cost_usd:
+                        span.set_attribute("cost_usd", message.total_cost_usd)
+                    if message.usage:
+                        span.set_attribute("usage", str(message.usage))
 
-        # Store accumulated text for memorables extraction
-        self._last_assistant_content = "".join(assistant_text_parts)
+                yield message
+
+            # Store accumulated text for memorables extraction
+            self._last_assistant_content = "".join(assistant_text_parts)
+            span.set_attribute("message_count", message_count)
+            span.set_attribute("response_length", len(self._last_assistant_content))
 
     # -------------------------------------------------------------------------
     # Properties
