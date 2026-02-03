@@ -11,7 +11,6 @@ One turn → one span → everything nested inside.
 """
 
 import asyncio
-import logging
 import socket
 from contextlib import nullcontext
 from typing import Any, Callable, Awaitable
@@ -19,8 +18,6 @@ from typing import Any, Callable, Awaitable
 import httpx
 import logfire
 from aiohttp import web
-
-logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
 
@@ -114,7 +111,7 @@ class AlphaProxy:
         self._site = web.TCPSite(self._runner, "127.0.0.1", self._port)
         await self._site.start()
 
-        logger.info(f"Alpha proxy started on port {self._port}")
+        logfire.info(f"Alpha proxy started on port {self._port}")
         return self._port
 
     async def stop(self) -> None:
@@ -130,7 +127,7 @@ class AlphaProxy:
         self._site = None
         self._app = None
 
-        logger.info("Alpha proxy stopped")
+        logfire.info("Alpha proxy stopped")
 
     @property
     def base_url(self) -> str:
@@ -182,7 +179,7 @@ class AlphaProxy:
                 try:
                     return await self._forward_request(request, path, span)
                 except Exception as e:
-                    logger.error(f"Proxy error: {e}")
+                    logfire.error(f"Proxy error: {e}")
                     span.set_attribute("error", str(e))
                     return web.Response(status=500, text=str(e))
 

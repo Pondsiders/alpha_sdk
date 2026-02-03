@@ -5,13 +5,11 @@ Answers the question: what's the situation?
 """
 
 import asyncio
-import logging
 import os
 import socket
 
+import logfire
 import redis.asyncio as aioredis
-
-logger = logging.getLogger(__name__)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://alpha-pi:6379")
 
@@ -34,7 +32,7 @@ async def get_weather() -> str | None:
         await r.aclose()
         return weather
     except Exception as e:
-        logger.warning(f"Error fetching weather: {e}")
+        logfire.warn(f"Error fetching weather: {e}")
         return None
 
 

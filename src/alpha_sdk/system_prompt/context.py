@@ -8,12 +8,10 @@ The 'autoload' key controls what gets injected:
 - autoload: no    -> Ignored entirely
 """
 
-import logging
 from pathlib import Path
 
 import frontmatter
-
-logger = logging.getLogger(__name__)
+import logfire
 
 CONTEXT_ROOT = Path("/Pondside")
 CONTEXT_FILE_NAME = "ALPHA.md"
@@ -22,7 +20,7 @@ CONTEXT_FILE_NAME = "ALPHA.md"
 def find_context_files(root: Path = CONTEXT_ROOT) -> list[Path]:
     """Walk directory tree finding ALPHA.md files."""
     if not root.exists():
-        logger.warning(f"Context root does not exist: {root}")
+        logfire.warn(f"Context root does not exist: {root}")
         return []
 
     context_files = []
@@ -58,16 +56,16 @@ def load_context() -> tuple[list[dict], list[str]]:
                     "path": str(rel_path),
                     "content": post.content.strip(),
                 })
-                logger.debug(f"Loaded full context from {rel_path}")
+                logfire.debug(f"Loaded full context from {rel_path}")
 
             elif autoload == "when" and when:
                 when_hints.append(f"`Read({rel_path})` — **Topics:** {when}")
-                logger.debug(f"Added context hint for {rel_path}")
+                logfire.debug(f"Added context hint for {rel_path}")
 
         except Exception as e:
-            logger.warning(f"Failed to load context file {path}: {e}")
+            logfire.warn(f"Failed to load context file {path}: {e}")
 
     if all_blocks or when_hints:
-        logger.info(f"Loaded {len(all_blocks)} context(s), {len(when_hints)} hint(s)")
+        logfire.info(f"Loaded {len(all_blocks)} context(s), {len(when_hints)} hint(s)")
 
     return all_blocks, when_hints

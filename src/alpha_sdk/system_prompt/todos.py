@@ -3,12 +3,10 @@
 What needs doing.
 """
 
-import logging
 import os
 
+import logfire
 import redis.asyncio as aioredis
-
-logger = logging.getLogger(__name__)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://alpha-pi:6379")
 
@@ -33,5 +31,5 @@ async def get_todos() -> str | None:
         return None
 
     except Exception as e:
-        logger.warning(f"Error fetching todos: {e}")
+        logfire.warn(f"Error fetching todos: {e}")
         return None

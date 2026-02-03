@@ -4,12 +4,11 @@ Loads from local git repository, caches for the session.
 Version-controlled or bust.
 """
 
-import logging
 import os
 import subprocess
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+import logfire
 
 # Configuration
 SOUL_REPO_PATH = Path(os.environ.get(
@@ -35,7 +34,7 @@ def _read_from_git(filename: str, ref: str = "HEAD") -> str | None:
             timeout=5,
         )
         if result.returncode != 0:
-            logger.warning(f"git show {ref}:{filename} failed: {result.stderr}")
+            logfire.warn(f"git show {ref}:{filename} failed: {result.stderr}")
             return None
 
         commit = subprocess.run(
@@ -46,11 +45,11 @@ def _read_from_git(filename: str, ref: str = "HEAD") -> str | None:
             timeout=5,
         ).stdout.strip()
 
-        logger.info(f"Loaded {filename} from git (commit={commit}, {len(result.stdout)} chars)")
+        logfire.info(f"Loaded {filename} from git (commit={commit}, {len(result.stdout)} chars)")
         return result.stdout
 
     except Exception as e:
-        logger.error(f"Failed to read {filename} from git: {e}")
+        logfire.error(f"Failed to read {filename} from git: {e}")
         return None
 
 
@@ -58,7 +57,7 @@ def init() -> None:
     """Initialize the soul at startup. Call once."""
     global _soul_prompt, _compact_prompt
 
-    logger.info("Initializing Alpha soul...")
+    logfire.info("Initializing Alpha soul...")
 
     _soul_prompt = _read_from_git(SOUL_FILE)
     if _soul_prompt is None:
@@ -68,7 +67,7 @@ def init() -> None:
 
     _compact_prompt = _read_from_git(COMPACT_FILE)
     if _compact_prompt is None:
-        logger.warning("Compact prompt not loaded, will use fallback")
+        logfire.warn("Compact prompt not loaded, will use fallback")
 
 
 def get_soul() -> str:

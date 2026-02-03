@@ -9,7 +9,6 @@ Wraps Claude Agent SDK with:
 """
 
 import asyncio
-import logging
 import os
 from typing import Any, AsyncGenerator, AsyncIterable
 
@@ -29,8 +28,6 @@ from .weave import weave
 from .memories.recall import recall
 from .memories.suggest import suggest
 from .sessions import list_sessions, get_session_path, get_sessions_dir, SessionInfo
-
-logger = logging.getLogger(__name__)
 
 
 class AlphaClient:
@@ -152,7 +149,7 @@ class AlphaClient:
         # Create SDK client
         await self._create_sdk_client(session_id)
 
-        logger.info(f"AlphaClient connected (proxy on port {port})")
+        logfire.info(f"AlphaClient connected (proxy on port {port})")
 
     async def disconnect(self) -> None:
         """Disconnect and clean up resources."""
@@ -181,7 +178,7 @@ class AlphaClient:
             del os.environ["ANTHROPIC_BASE_URL"]
 
         self._current_session_id = None
-        logger.info("AlphaClient disconnected")
+        logfire.info("AlphaClient disconnected")
 
     async def __aenter__(self) -> "AlphaClient":
         """Context manager entry - connects the client."""
@@ -239,7 +236,7 @@ class AlphaClient:
                     if memories:
                         span.set_attribute("memories_recalled", len(memories))
                         self._turn_span.set_attribute("memories_recalled", len(memories))
-                        logger.info(f"Recalled {len(memories)} memories")
+                        logfire.info(f"Recalled {len(memories)} memories")
 
             # Send to SDK
             if self._sdk_client:
@@ -381,6 +378,6 @@ class AlphaClient:
         await self._sdk_client.connect()
 
         self._current_session_id = session_id
-        logger.info(
+        logfire.info(
             f"SDK client created (session={session_id or 'new'}, fork={fork_from})"
         )

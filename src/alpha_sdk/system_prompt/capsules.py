@@ -3,12 +3,10 @@
 The past section: what happened yesterday and last night.
 """
 
-import logging
 import os
 
+import logfire
 import pendulum
-
-logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -36,7 +34,7 @@ async def get_capsules() -> tuple[str | None, str | None]:
     Returns (older_summary, newer_summary) as formatted strings.
     """
     if not DATABASE_URL:
-        logger.debug("No DATABASE_URL, skipping capsules")
+        logfire.debug("No DATABASE_URL, skipping capsules")
         return None, None
 
     try:
@@ -65,5 +63,5 @@ async def get_capsules() -> tuple[str | None, str | None]:
             return None, None
 
     except Exception as e:
-        logger.warning(f"Error fetching capsules: {e}")
+        logfire.warn(f"Error fetching capsules: {e}")
         return None, None

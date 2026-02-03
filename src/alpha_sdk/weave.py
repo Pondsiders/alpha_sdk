@@ -4,14 +4,11 @@ Takes an API request, replaces the system prompt with Alpha's
 assembled prompt, and returns the modified request.
 """
 
-import logging
 from typing import Any
 
 import logfire
 
 from .system_prompt import assemble
-
-logger = logging.getLogger(__name__)
 
 
 async def weave(
@@ -68,9 +65,9 @@ async def weave(
             span.set_attribute("merge_mode", "replace_string")
 
         else:
-            logger.warning(f"Unexpected system format: {type(existing_system)}, replacing")
+            logfire.warn(f"Unexpected system format: {type(existing_system)}, replacing")
             body["system"] = system_blocks
             span.set_attribute("merge_mode", "replace_unexpected")
 
-        logger.info(f"Wove Alpha into request ({len(system_blocks)} blocks)")
+        logfire.info(f"Wove Alpha into request ({len(system_blocks)} blocks)")
         return body

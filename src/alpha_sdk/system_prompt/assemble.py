@@ -5,7 +5,6 @@ Each piece is fetched and assembled into a coherent whole.
 """
 
 import asyncio
-import logging
 import os
 
 import logfire
@@ -18,8 +17,6 @@ from .here import get_here
 from .context import load_context
 from .calendar import get_events
 from .todos import get_todos
-
-logger = logging.getLogger(__name__)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://alpha-pi:6379")
 
@@ -49,7 +46,7 @@ async def _get_hud_extras() -> dict:
             "today_so_far_time": today_so_far_time if not isinstance(today_so_far_time, Exception) else None,
         }
     except Exception as e:
-        logger.warning(f"Error fetching HUD extras: {e}")
+        logfire.warn(f"Error fetching HUD extras: {e}")
         return {}
 
 
@@ -149,5 +146,5 @@ async def assemble(client: str | None = None, hostname: str | None = None) -> li
         span.set_attribute("context_files", len(context_blocks))
         span.set_attribute("context_hints", len(context_hints))
 
-        logger.info(f"Assembled system prompt: {len(blocks)} blocks")
+        logfire.info(f"Assembled system prompt: {len(blocks)} blocks")
         return blocks
