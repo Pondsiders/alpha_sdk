@@ -50,6 +50,25 @@ from .system_prompt.soul import get_soul
 REDIS_URL = os.environ.get("REDIS_URL", "redis://alpha-pi:6379")
 
 
+def _message_to_dict(message: Any) -> dict:
+    """Convert an SDK message to a dict for logging.
+
+    Handles the various dataclass types from claude_agent_sdk.
+    """
+    from dataclasses import asdict, is_dataclass
+
+    if is_dataclass(message) and not isinstance(message, type):
+        try:
+            return asdict(message)
+        except Exception:
+            # Some fields might not be serializable
+            return {"type": type(message).__name__, "repr": repr(message)[:500]}
+    elif hasattr(message, "__dict__"):
+        return {"type": type(message).__name__, **message.__dict__}
+    else:
+        return {"type": type(message).__name__, "repr": repr(message)[:500]}
+
+
 def _format_memory(memory: dict) -> str:
     """Format a memory for inclusion in user content.
 
@@ -397,6 +416,14 @@ class AlphaClient:
 
                 async for message in self._sdk_client.receive_response():
                     message_count += 1
+
+                    # Log non-streaming messages for debugging
+                    # StreamEvent is too noisy (one per SSE delta), skip it
+                    if not isinstance(message, StreamEvent):
+                        logfire.debug(
+                            f"sdk.message.{type(message).__name__}",
+                            message=_message_to_dict(message),
+                        )
 
                     # Handle assistant messages (text + tool calls)
                     if isinstance(message, AssistantMessage):
