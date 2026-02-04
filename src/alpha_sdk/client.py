@@ -166,7 +166,8 @@ class AlphaClient:
         self._orientation_blocks: list[dict] | None = None  # Cached for re-injection
 
         # Turn state
-        self._last_user_content: str = ""
+        self._last_user_content: str = ""  # Just the user's text (for memorables)
+        self._last_content_blocks: list[dict] = []  # Full content array (for observability)
         self._last_assistant_content: str = ""
         self._turn_span: logfire.LogfireSpan | None = None
         self._suggest_task: asyncio.Task | None = None
@@ -329,6 +330,9 @@ class AlphaClient:
 
             span.set_attribute("content_blocks", len(content_blocks))
 
+            # Store for observability (full content, not just user text)
+            self._last_content_blocks = content_blocks
+
             # Send via transport bypass (SDK query() only takes strings)
             message = {
                 "type": "user",
@@ -397,14 +401,31 @@ class AlphaClient:
                     self._turn_span.set_attribute("response_length", len(self._last_assistant_content))
 
                     # Add gen_ai.* attributes for Logfire panel
+                    # Full input includes all content blocks (orientation, memories, user text)
+                    input_parts = []
+                    for block in self._last_content_blocks:
+                        if block.get("type") == "text":
+                            input_parts.append({
+                                "type": "text",
+                                "content": block.get("text", "")
+                            })
                     input_msg = json.dumps([{
                         "role": "user",
-                        "parts": [{"type": "text", "content": self._last_user_content}]
+                        "parts": input_parts
                     }])
+
                     output_msg = json.dumps([{
                         "role": "assistant",
                         "parts": [{"type": "text", "content": self._last_assistant_content}],
                     }])
+
+                    # System instructions = just the soul
+                    if self._system_prompt:
+                        self._turn_span.set_attribute(
+                            "gen_ai.system_instructions",
+                            json.dumps([{"type": "text", "content": self._system_prompt}])
+                        )
+
                     self._turn_span.set_attribute("gen_ai.input.messages", input_msg)
                     self._turn_span.set_attribute("gen_ai.output.messages", output_msg)
                     self._turn_span.set_attribute("gen_ai.operation.name", "chat")
