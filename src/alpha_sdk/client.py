@@ -42,7 +42,7 @@ from claude_agent_sdk.types import (
 )
 
 from .archive import archive_turn
-from .compact_proxy import CompactProxy
+from .compact_proxy import CompactProxy, TokenCountCallback
 from .memories.recall import recall
 from .memories.suggest import suggest
 from .sessions import list_sessions, get_session_path, get_sessions_dir, SessionInfo
@@ -174,6 +174,7 @@ class AlphaClient:
         archive: bool = True,
         include_partial_messages: bool = True,
         permission_mode: PermissionMode = "default",
+        on_token_count: "TokenCountCallback | None" = None,
     ):
         """Initialize the Alpha client.
 
@@ -186,6 +187,8 @@ class AlphaClient:
             archive: Whether to archive turns to Postgres
             include_partial_messages: Stream partial messages for real-time updates
             permission_mode: How to handle tool permission requests
+            on_token_count: Callback when token count increases: (count, window) -> None
+                           Used for context-o-meter. Fires with max(seen_counts) after each request.
         """
         self.cwd = cwd
         self.client_name = client_name
@@ -195,6 +198,7 @@ class AlphaClient:
         self.archive = archive
         self.include_partial_messages = include_partial_messages
         self.permission_mode = permission_mode
+        self._on_token_count = on_token_count
 
         # Internal state
         self._sdk_client: ClaudeSDKClient | None = None
@@ -241,8 +245,8 @@ class AlphaClient:
             session_id: Session to resume, or None for new session
         """
         with logfire.span("alpha.connect") as span:
-            # Start compact proxy (intercepts only compact prompts for rewriting)
-            self._compact_proxy = CompactProxy()
+            # Start compact proxy (intercepts compact prompts + counts tokens)
+            self._compact_proxy = CompactProxy(on_token_count=self._on_token_count)
             await self._compact_proxy.start()
             os.environ["ANTHROPIC_BASE_URL"] = self._compact_proxy.base_url
             span.set_attribute("proxy_port", self._compact_proxy.port)
@@ -709,6 +713,20 @@ class AlphaClient:
         """Check if the client is connected."""
         return self._sdk_client is not None
 
+    @property
+    def token_count(self) -> int:
+        """Get the current token count (for context-o-meter)."""
+        if self._compact_proxy:
+            return self._compact_proxy.token_count
+        return 0
+
+    @property
+    def context_window(self) -> int:
+        """Get the context window size."""
+        if self._compact_proxy:
+            return self._compact_proxy.context_window
+        return CompactProxy.DEFAULT_CONTEXT_WINDOW
+
     # -------------------------------------------------------------------------
     # Internal
     # -------------------------------------------------------------------------
@@ -749,9 +767,14 @@ class AlphaClient:
         tool_use_id: str | None,
         context: HookContext,
     ) -> dict[str, Any]:
-        """Hook called before compaction - flag that we need to re-orient."""
-        logfire.info("Compaction triggered, will re-orient on next turn")
+        """Hook called before compaction - flag that we need to re-orient and reset token count."""
+        logfire.info("Compaction triggered, will re-orient on next turn and reset token count")
         self._needs_reorientation = True
+
+        # Reset token count since compaction clears most of the context
+        if self._compact_proxy:
+            self._compact_proxy.reset_token_count()
+
         return {"continue_": True}
 
     async def _ensure_session(self, session_id: str | None) -> None:

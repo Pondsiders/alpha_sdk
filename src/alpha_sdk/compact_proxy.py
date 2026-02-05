@@ -1,4 +1,4 @@
-"""Minimal proxy for compact prompt rewriting.
+"""Minimal proxy for compact prompt rewriting + token counting.
 
 The ONLY job of this proxy is to intercept auto-compact requests and rewrite
 the prompts so Alpha stops and checks in instead of barreling forward.
@@ -13,16 +13,23 @@ We just need to catch:
 2. The compact instructions → replace with Alpha's custom prompt
 3. The "continue without asking" instruction → replace with "stop and check in"
 
+Token counting (Feb 2026):
+- Echoes each request to Anthropic's /v1/messages/count_tokens endpoint
+- Tracks max(token_count, new_count) so warmup noise is filtered out
+- Fires a callback when count increases
+- Resets to 0 after compaction
+
 Debug mode:
 Set ALPHA_SDK_CAPTURE_REQUESTS=1 to dump every request to tests/captures/
 """
 
+import asyncio
 import json
 import os
 import socket
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Awaitable
 
 if TYPE_CHECKING:
     from .client import AlphaClient
@@ -30,6 +37,9 @@ if TYPE_CHECKING:
 import httpx
 import logfire
 from aiohttp import web
+
+# Token counting callback type: (token_count, context_window) -> None or Awaitable[None]
+TokenCountCallback = Callable[[int, int], None] | Callable[[int, int], Awaitable[None]]
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
 
@@ -286,10 +296,12 @@ def _replace_continuation_instruction(body: dict) -> bool:
 
 
 class CompactProxy:
-    """Minimal async proxy for compact prompt rewriting.
+    """Minimal async proxy for compact prompt rewriting + token counting.
 
     Usage:
-        proxy = CompactProxy()
+        proxy = CompactProxy(
+            on_token_count=lambda count, window: print(f"{count}/{window} tokens")
+        )
         await proxy.start()
 
         os.environ["ANTHROPIC_BASE_URL"] = proxy.base_url
@@ -297,15 +309,34 @@ class CompactProxy:
         # ... use SDK ...
 
         await proxy.stop()
+
+    Token counting:
+        - Echoes each /v1/messages request to /v1/messages/count_tokens
+        - Tracks max(token_count, new_count) to filter warmup noise
+        - Fires on_token_count callback when count increases
+        - Call reset_token_count() after compaction
     """
 
-    def __init__(self):
+    # Default context window (Opus 4.5)
+    DEFAULT_CONTEXT_WINDOW = 200_000
+
+    def __init__(
+        self,
+        on_token_count: TokenCountCallback | None = None,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
+    ):
         self._port: int | None = None
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._trace_context: dict | None = None
+
+        # Token counting state
+        self._on_token_count = on_token_count
+        self._context_window = context_window
+        self._token_count = 0
+        self._warned_no_api_key = False
 
     def set_trace_context(self, ctx: dict) -> None:
         """Set the trace context for request handlers.
@@ -358,6 +389,102 @@ class CompactProxy:
     def port(self) -> int | None:
         """Get the port number."""
         return self._port
+
+    @property
+    def token_count(self) -> int:
+        """Get the current token count."""
+        return self._token_count
+
+    @property
+    def context_window(self) -> int:
+        """Get the context window size."""
+        return self._context_window
+
+    def reset_token_count(self) -> None:
+        """Reset token count to 0. Call this after compaction."""
+        old_count = self._token_count
+        self._token_count = 0
+        logfire.info(f"Token count reset: {old_count} -> 0")
+
+    async def _count_tokens_and_update(self, body: dict, headers: dict) -> None:
+        """Count tokens in the request and update if it's a new max.
+
+        Fire-and-forget: this runs async and doesn't block the main request.
+        Requires ANTHROPIC_API_KEY in environment (warns once if missing).
+        """
+        if self._http_client is None:
+            return
+
+        # Check for API key - read dynamically in case it was set after module load
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            if not self._warned_no_api_key:
+                logfire.warn(
+                    "Token counting disabled: ANTHROPIC_API_KEY not set. "
+                    "Set this environment variable to enable context-o-meter."
+                )
+                self._warned_no_api_key = True
+            return
+
+        try:
+            with logfire.span("token_count.request") as span:
+                # Build auth headers - we need the API key for the count endpoint
+                count_headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": headers.get("anthropic-version", "2023-06-01"),
+                    "content-type": "application/json",
+                }
+
+                # Build count_tokens body - only specific fields are accepted
+                # The endpoint rejects extra fields like metadata, max_tokens, stream, etc.
+                count_body = {}
+                for key in ("messages", "model", "system", "tools", "tool_choice", "thinking"):
+                    if key in body:
+                        count_body[key] = body[key]
+
+                # Call the token counting endpoint
+                response = await self._http_client.post(
+                    f"{ANTHROPIC_API_URL}/v1/messages/count_tokens",
+                    content=json.dumps(count_body).encode(),
+                    headers=count_headers,
+                    timeout=10.0,  # Quick timeout, this is fire-and-forget
+                )
+
+                if response.status_code != 200:
+                    try:
+                        error_body = response.json()
+                    except Exception:
+                        error_body = response.text
+                    logfire.debug(f"Token count failed: {response.status_code} - {error_body}")
+                    return
+
+                result = response.json()
+                new_count = result.get("input_tokens", 0)
+                span.set_attribute("input_tokens", new_count)
+
+                # Only update if this is larger than what we've seen
+                if new_count > self._token_count:
+                    old_count = self._token_count
+                    self._token_count = new_count
+
+                    logfire.info(
+                        f"Token count: {old_count} -> {new_count} "
+                        f"({new_count / self._context_window * 100:.1f}%)"
+                    )
+
+                    # Fire the callback if we have one
+                    if self._on_token_count:
+                        try:
+                            result = self._on_token_count(self._token_count, self._context_window)
+                            # If it returns an awaitable, await it
+                            if asyncio.iscoroutine(result):
+                                await result
+                        except Exception as e:
+                            logfire.warning(f"Token count callback error: {e}")
+
+        except Exception as e:
+            # Don't let token counting errors affect the main request
+            logfire.debug(f"Token count error (ignored): {e}")
 
     def _capture_request(self, path: str, body: dict) -> None:
         """Dump request to a JSON file for debugging.
@@ -441,6 +568,12 @@ class CompactProxy:
 
         if "content-type" not in headers:
             headers["content-type"] = "application/json"
+
+        # Token counting: fire-and-forget for /v1/messages requests
+        # (Skip count_tokens endpoint itself to avoid recursion)
+        if body is not None and path == "/v1/messages":
+            if self._on_token_count:
+                asyncio.create_task(self._count_tokens_and_update(body, headers))
 
         # Forward to Anthropic
         url = f"{ANTHROPIC_API_URL}{path}"
