@@ -159,6 +159,10 @@ class AlphaClient:
                 print(event)
     """
 
+    # The model that IS Alpha. Pinned at the SDK level, not configurable per-client.
+    # When we upgrade Alpha to a new model, we bump alpha_sdk version.
+    ALPHA_MODEL = "claude-opus-4-5-20251101"
+
     def __init__(
         self,
         cwd: str = "/Pondside",
@@ -332,7 +336,7 @@ class AlphaClient:
         # Set gen_ai attributes for Model Run card (progressively enhanced)
         self._turn_span.set_attribute("gen_ai.system", "anthropic")
         self._turn_span.set_attribute("gen_ai.operation.name", "chat")
-        self._turn_span.set_attribute("gen_ai.request.model", "claude-opus-4-5-20251101")
+        self._turn_span.set_attribute("gen_ai.request.model", self.ALPHA_MODEL)
         if session_id:
             self._turn_span.set_attribute("gen_ai.conversation.id", session_id)
 
@@ -771,16 +775,18 @@ class AlphaClient:
         }
 
         # Build options with our system prompt
-        options = ClaudeAgentOptions(
-            cwd=self.cwd,
-            system_prompt=self._system_prompt,  # Just the soul!
-            allowed_tools=self.allowed_tools or [],
-            mcp_servers=self.mcp_servers,
-            include_partial_messages=self.include_partial_messages,
-            resume=session_id,
-            permission_mode=self.permission_mode,
-            hooks=hooks,
-        )
+        options_kwargs = {
+            "cwd": self.cwd,
+            "system_prompt": self._system_prompt,  # Just the soul!
+            "model": self.ALPHA_MODEL,  # Alpha IS this model
+            "allowed_tools": self.allowed_tools or [],
+            "mcp_servers": self.mcp_servers,
+            "include_partial_messages": self.include_partial_messages,
+            "resume": session_id,
+            "permission_mode": self.permission_mode,
+            "hooks": hooks,
+        }
+        options = ClaudeAgentOptions(**options_kwargs)
 
         # Create and connect
         self._sdk_client = ClaudeSDKClient(options)

@@ -1,12 +1,12 @@
 [project]
 name = "alpha_sdk"
-version = "0.1.0"
+version = "0.4.0"
 description = "Everything that turns Claude into Alpha"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9.0",
     "asyncpg>=0.30.0",
-    "claude-agent-sdk==0.1.29",
+    "claude-agent-sdk==0.1.30",
     "httpx>=0.28.0",
     "logfire[httpx]>=3.0.0",
     "pendulum>=3.0.0",
@@ -16,7 +16,13 @@ dependencies = [
     "redis>=5.0.0",
     "pyyaml>=6.0.0",
     "datasets>=4.5.0",
+    # CLI dependencies
+    "typer>=0.12.0",
+    "rich>=13.0.0",
 ]
+
+[project.scripts]
+cortex = "alpha_sdk.cli.cortex:main"
 
 [project.optional-dependencies]
 dev = [
